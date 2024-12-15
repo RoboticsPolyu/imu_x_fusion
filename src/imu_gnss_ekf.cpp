@@ -33,8 +33,8 @@ class FusionNode {
     ekf_ptr_->predictor_ptr_ = std::make_shared<IMU>(ekf_ptr_->state_ptr_, acc_n, gyr_n, acc_w, gyr_w);
     ekf_ptr_->observer_ptr_ = std::make_shared<GNSS>();
 
-    std::string topic_imu = "/imu/data";
-    std::string topic_gps = "/fix";
+    std::string topic_imu = "/livox/imu";
+    std::string topic_gps = "/ublox_driver/receiver_lla";
 
     imu_sub_ = nh.subscribe<sensor_msgs::Imu>(topic_imu, 10, boost::bind(&FusionNode::imu_callback, this, _1));
 
@@ -52,9 +52,10 @@ class FusionNode {
 
   void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg) {
     Eigen::Vector3d acc, gyr;
-    acc[0] = imu_msg->linear_acceleration.x;
-    acc[1] = imu_msg->linear_acceleration.y;
-    acc[2] = imu_msg->linear_acceleration.z;
+    double g = 9.81;
+    acc[0] = imu_msg->linear_acceleration.x *g;
+    acc[1] = imu_msg->linear_acceleration.y *g;
+    acc[2] = imu_msg->linear_acceleration.z *g;
     gyr[0] = imu_msg->angular_velocity.x;
     gyr[1] = imu_msg->angular_velocity.y;
     gyr[2] = imu_msg->angular_velocity.z;
@@ -76,17 +77,20 @@ class FusionNode {
 };
 
 void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
-  if (gps_msg->status.status != 2) {
+  if (gps_msg->status.status != 3) {
     printf("[cggos %s] ERROR: Bad GPS Message!!!\n", __FUNCTION__);
     return;
   }
 
   GpsData::Ptr gps_data_ptr = std::make_shared<GpsData>();
-  gps_data_ptr->timestamp = gps_msg->header.stamp.toSec();
+  gps_data_ptr->timestamp = gps_msg->header.stamp.toSec() - 18.0 + 0.08;
   gps_data_ptr->lla[0] = gps_msg->latitude;
   gps_data_ptr->lla[1] = gps_msg->longitude;
   gps_data_ptr->lla[2] = gps_msg->altitude;
   gps_data_ptr->cov = Eigen::Map<const Eigen::Matrix3d>(gps_msg->position_covariance.data());
+  Eigen::Matrix3d cov;
+  cov << 1, 0, 0, 0, 1, 0, 0, 0, 1;
+  gps_data_ptr->cov = cov;
 
   if (!ekf_ptr_->predictor_ptr_->inited_) {
     if (!ekf_ptr_->predictor_ptr_->init(gps_data_ptr->timestamp)) return;

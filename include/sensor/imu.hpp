@@ -75,6 +75,9 @@ class IMU : public Predictor {
     const auto &imu = imu_buf_.back();
     last_data_ptr_ = std::make_shared<Predictor::Data>(imu->timestamp_, imu->acc, imu->gyr);
 
+    std::cout << std::fixed << std::showpoint;
+    std::cout << std::setprecision(9);
+    std::cout << " -- [Debug] ts_meas: [ " << ts_meas << " ], IMU timestamp: [" << last_data_ptr_->timestamp_ << " ]. " << std::endl;
     if (std::abs(ts_meas - last_data_ptr_->timestamp_) > 0.05) {
       printf("[cggos %s] ERROR: timestamps are not synchronized!!!\n", __FUNCTION__);
       return false;

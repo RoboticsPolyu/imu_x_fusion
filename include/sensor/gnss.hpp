@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "fusion/observer.hpp"
+#include "wmm/GeomagnetismLibrary.hpp"
 
 namespace cg {
 
@@ -102,7 +103,10 @@ class GNSS : public Observer {
 
  private:
   Eigen::Vector3d init_lla_;
-  Eigen::Vector3d I_p_Gps_ = Eigen::Vector3d::Zero();
+  Eigen::Vector3d I_p_Gps_  = Eigen::Vector3d::Zero(); // GPS Measurement in ENU
+  Eigen::Vector3d I_refMag_ = Eigen::Vector3d::Zero(); // Ref Mag Value (T) based on inital GPS in ENU
+  Eigen::Vector3d I_mag_    = Eigen::Vector3d::Zero(); // Mag Measurement (T) in ENU 
+  
 };
 
 }  // namespace cg
