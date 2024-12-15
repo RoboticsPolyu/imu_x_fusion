@@ -194,10 +194,6 @@ int main(int argc, char **argv) {
 Eigen::Vector3d FusionNode::interpolateMag(double t_gps) {
   std::lock_guard<std::mutex> lock(mag_mutex_);
 
-  // Remove all data before t_gps 
-  while (!mag_buf_.empty() && mag_buf_.front()[0] < t_gps) { 
-    mag_buf_.pop_front(); 
-  } 
   // Ensure there's data to interpolate 
   if (mag_buf_.size() < 2) { 
     throw std::runtime_error("Not enough magnetic field measurements for interpolation."); 
@@ -207,7 +203,7 @@ Eigen::Vector3d FusionNode::interpolateMag(double t_gps) {
   bool found = false;
 
   for (size_t i = 1; i < mag_buf_.size(); ++i) {
-    if (mag_buf_[i-1][0] <= t_gps && mag_buf_[i][0] >= t_gps) {
+    if (mag_buf_[i-1][0] <= t_gps && mag_buf_[i][0] > t_gps) {
       prev = mag_buf_[i-1];
       next = mag_buf_[i];
       found = true;
@@ -226,6 +222,11 @@ Eigen::Vector3d FusionNode::interpolateMag(double t_gps) {
   Eigen::Vector3d mag_interpolated = (1 - ratio) * prev.tail<3>() + ratio * next.tail<3>();
 
   ROS_INFO("Interpolated Magnetic Field: [x: %f, y: %f, z: %f]", mag_interpolated[0], mag_interpolated[1], mag_interpolated[2]);
+
+  // Remove all data before t_gps 
+  while (!mag_buf_.empty() && mag_buf_.front()[0] <= t_gps) { 
+    mag_buf_.pop_front(); 
+  } 
 
   return mag_interpolated;
 }
