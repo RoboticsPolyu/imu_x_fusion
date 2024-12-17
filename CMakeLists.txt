@@ -193,7 +193,7 @@ add_executable(imu_gnss_ekf_node src/imu_gnss_ekf.cpp)
 set_target_properties(imu_gnss_ekf_node PROPERTIES COMPILE_DEFINITIONS EIGEN_NO_MALLOC)
 target_link_libraries(imu_gnss_ekf_node ${catkin_LIBRARIES} ${OpenCV_LIBS} ${GeographicLib_LIBRARIES})
 
-add_executable(imu_gnss_mag_ekf_node src/imu_gnss_mag_ekf_node.cpp)
+add_executable(imu_gnss_mag_ekf_node src/imu_gnss_mag_ekf.cpp)
 set_target_properties(imu_gnss_mag_ekf_node PROPERTIES COMPILE_DEFINITIONS EIGEN_NO_MALLOC)
 target_link_libraries(imu_gnss_mag_ekf_node ${catkin_LIBRARIES} ${OpenCV_LIBS} ${GeographicLib_LIBRARIES})
 
@@ -239,7 +239,7 @@ install(PROGRAMS
 # Mark executables for installation
 # See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_executables.html
 install(TARGETS
-  imu_gnss_ekf_node imu_vo_ekf_node imu_vo_ukf_node imu_vo_map_node
+  imu_gnss_ekf_node imu_gnss_mag_ekf_node imu_vo_ekf_node imu_vo_ukf_node imu_vo_map_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -56,6 +56,7 @@ class FusionNode {
     acc[0] = imu_msg->linear_acceleration.x *g;
     acc[1] = imu_msg->linear_acceleration.y *g;
     acc[2] = imu_msg->linear_acceleration.z *g;
+
     gyr[0] = imu_msg->angular_velocity.x;
     gyr[1] = imu_msg->angular_velocity.y;
     gyr[2] = imu_msg->angular_velocity.z;

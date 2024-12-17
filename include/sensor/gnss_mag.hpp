@@ -16,9 +16,9 @@ struct GpsMagData {
   double timestamp;
 
   Eigen::Vector3d lla;  // Latitude in degree, longitude in degree, and altitude in meter
-  Eigen::Matrix3d mag;  // Mag in uT
+  Eigen::Vector3d mag;  // Mag in uT
   
-  Eigen::Matrix6d cov;  // Covariance in m^2
+  Eigen::Matrix<double, kMeasDim, kMeasDim> cov;  // Covariance in m^2
 
   using Ptr = std::shared_ptr<GpsMagData>;
   using ConstPtr = std::shared_ptr<const GpsMagData>;
@@ -32,7 +32,7 @@ class GNSS_MAG : public Observer {
 
   virtual ~GNSS_MAG() {}
 
-  void set_params(GpsMagData::ConstPtr gps_data_ptr, const Eigen::Vector3d &I_p_Gps = Eigen::Vector3d::Zero(), const Eigen::Vector3d &Mag_ENU) {
+  void set_params(GpsMagData::ConstPtr gps_data_ptr, const Eigen::Vector3d &I_p_Gps = Eigen::Vector3d::Zero(), const Eigen::Vector3d &Mag_ENU = Eigen::Vector3d::Zero()) {
     init_lla_ = gps_data_ptr->lla;
     I_p_Gps_ = I_p_Gps;
     Mag_ENU_ = Mag_ENU;
@@ -45,10 +45,15 @@ class GNSS_MAG : public Observer {
     Eigen::Matrix<double, kMeasDim, 1> residual;
     residual.topRows(3) = Twb * I_p_Gps_;
     residual.bottomRows(3) = Twb.rotation().transpose()* Mag_ENU_;
+
+    std::cout << "predicted: " << residual.transpose() << std::endl;
+    return residual;
   }
 
   virtual Eigen::MatrixXd measurement_residual(const Eigen::MatrixXd &mat_x, const Eigen::MatrixXd &mat_z) {
-    return mat_z - measurement_function(mat_x);
+    Eigen::MatrixXd res = mat_z - measurement_function(mat_x);
+    std::cout << "mat_z - measurement_function(mat_x): " << res.transpose() << std::endl;
+    return res;
   }
 
   virtual Eigen::MatrixXd measurement_jacobian(const Eigen::MatrixXd &mat_x, const Eigen::MatrixXd &mat_z) {
@@ -77,10 +82,11 @@ class GNSS_MAG : public Observer {
     return p_G_Gps;
   }
 
-  Eigen::Vector6d g2l_mag(GpsMagData::ConstPtr gps_data_ptr) {
+  Eigen::VectorXd g2l_mag(GpsMagData::ConstPtr gps_data_ptr) {
     Eigen::Vector3d p_G_Gps;
     GNSS_MAG::lla2enu(init_lla_, gps_data_ptr->lla, &p_G_Gps);
-    Eigen::Vector6d p_G_Gps_Mag;
+    Eigen::VectorXd p_G_Gps_Mag;
+    p_G_Gps_Mag = Eigen::MatrixXd::Zero(6, 1);
     p_G_Gps_Mag.head(3) = p_G_Gps;
     p_G_Gps_Mag.tail(3) = gps_data_ptr->mag;
     return p_G_Gps_Mag;

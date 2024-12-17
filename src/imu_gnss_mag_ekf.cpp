@@ -12,7 +12,7 @@
 #include "estimator/ekf.hpp"
 #include "sensor/gnss_mag.hpp"
 #include "sensor/imu.hpp"
-
+#include "wmm/mag.h"
 
 namespace cg {
 
@@ -34,11 +34,13 @@ class FusionNode {
     ekf_ptr_ = std::make_unique<EKF>();
     ekf_ptr_->state_ptr_->set_cov(sigma_pv, sigma_pv, sigma_rp, sigma_yaw, 0.02, 0.02);
     ekf_ptr_->predictor_ptr_ = std::make_shared<IMU>(ekf_ptr_->state_ptr_, acc_n, gyr_n, acc_w, gyr_w);
-    ekf_ptr_->observer_ptr_ = std::make_shared<GNSS_MAG_MAG>();
+    ekf_ptr_->observer_ptr_ = std::make_shared<GNSS_MAG>();
 
     std::string topic_imu = "/livox/imu";
+    // std::string topic_imu = "/mavros/imu/data_raw";
     std::string topic_gps = "/ublox_driver/receiver_lla";
     std::string topic_mag = "/mavros/imu/mag";
+    wmm_cof_path_ = "/home/peiwen/GIM_ws/src/imu_x_fusion/config/WMM.COF";
 
     imu_sub_ = nh.subscribe<sensor_msgs::Imu>(topic_imu, 10, boost::bind(&FusionNode::imu_callback, this, _1));
 
@@ -62,6 +64,7 @@ class FusionNode {
     acc[0] = imu_msg->linear_acceleration.x *g;
     acc[1] = imu_msg->linear_acceleration.y *g;
     acc[2] = imu_msg->linear_acceleration.z *g;
+
     gyr[0] = imu_msg->angular_velocity.x;
     gyr[1] = imu_msg->angular_velocity.y;
     gyr[2] = imu_msg->angular_velocity.z;
@@ -72,18 +75,26 @@ class FusionNode {
   void mag_callback(const sensor_msgs::MagneticField::ConstPtr& msg) {
     std::lock_guard<std::mutex> lock(mag_mutex_);
       // Add the new message to the deque
+    Eigen::Vector3d magnetic, magnetic_bias;
+    double scale = 2.0;
+    
+    magnetic << msg->magnetic_field.x* 1e6, msg->magnetic_field.y* 1e6, msg->magnetic_field.z* 1e6;
+    magnetic_bias << 0 ,0 ,0;
+    magnetic = scale* magnetic + magnetic_bias;
+
     Eigen::Vector4d t_mag;
-    t_mag << msg->header.stamp.toSec(), msg->magnetic_field.x, msg->magnetic_field.y, msg->magnetic_field.z;
+    t_mag[0] = msg->header.stamp.toSec();
+    t_mag.tail(3) = magnetic;
 
     mag_buf_.push_back(t_mag); // Remove the oldest message if the cache size limit is exceeded 
     if (mag_buf_.size() > mag_buf_size) { 
       mag_buf_.pop_front(); 
     }
     // Log the most recent message (for demonstration purposes)
-    // ROS_INFO("Cached Magnetic Field: [x: %f, y: %f, z: %f]", msg->magnetic_field.x, msg->magnetic_field.y, msg->magnetic_field.z);
+    ROS_INFO("Cached Magnetic Field: [x: %f, y: %f, z: %f]", magnetic[0], magnetic[1], magnetic[2]);
   }
 
-  Eigen::Vector3d interpolateMag(double t_gps);
+  Eigen::Vector3d interpolate_mag(double t_gps);
 
   void gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg);
 
@@ -95,12 +106,16 @@ class FusionNode {
   std::deque<Eigen::Vector4d> mag_buf_;
   const std::size_t mag_buf_size = 100;
   std::mutex mag_mutex_;
+  bool first_mag_ = true;
+  Eigen::Vector3d Mag_ENU;
 
   EKFPtr ekf_ptr_;
   Viewer viewer_;
 
   std::ofstream file_gps_;
   std::ofstream file_state_;
+  std::string wmm_cof_path_;
+
 };
 
 void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
@@ -115,23 +130,42 @@ void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
   gps_mag_data_ptr->lla[1] = gps_msg->longitude;
   gps_mag_data_ptr->lla[2] = gps_msg->altitude;
 
-  try { 
-    gps_mag_data_ptr->mag = interpolateMag(gps_mag_data_ptr->timestamp);
-  } catch (const std::exception& e) { 
-    std::cerr << "Error: " << e.what() << std::endl; 
+  if(first_mag_)
+  {
+    first_mag_ = false;
+    if(!calc_local_mag_field(gps_mag_data_ptr->lla, Mag_ENU, wmm_cof_path_))
+    {
+      std::cerr << "Error calc_local_mag_field. " << std::endl;
+      return; 
+    }
+    std::cout << "[ Mag ENU ]: " << Mag_ENU.transpose() << std::endl;
   }
+  // try { 
+  //   gps_mag_data_ptr->mag = interpolate_mag(gps_mag_data_ptr->timestamp);
+  // } catch (const std::exception& e) { 
+  //   std::cerr << "Error: " << e.what() << std::endl; 
+  //   return;
+  // }
 
-  gps_mag_data_ptr->cov = Eigen::Map<const Eigen::Matrix3d>(gps_msg->position_covariance.data());
-  Eigen::Matrix6d cov;
-  Eigen::Vector6d vec6d;
+  gps_mag_data_ptr->mag = mag_buf_.back().tail(3);
+
+  std::cout << "interpolate_mag"  << std::endl;
+  // gps_mag_data_ptr->cov = Eigen::Map<const Eigen::Matrix3d>(gps_msg->position_covariance.data());
+  Eigen::Matrix<double, kMeasDim, kMeasDim> cov;
+  cov.setZero();
+  Eigen::VectorXd vec6d;
+  vec6d = Eigen::MatrixXd::Zero(6, 1);
   vec6d << 1, 1, 1, 1, 1, 1;
   cov.diagonal() = vec6d;
+  std::cout <<  vec6d.transpose() << std::endl;
+  
   gps_mag_data_ptr->cov = cov;
+  std::cout <<  "Setting gps mag cov matrix: " << cov << std::endl;
 
   if (!ekf_ptr_->predictor_ptr_->inited_) {
     if (!ekf_ptr_->predictor_ptr_->init(gps_mag_data_ptr->timestamp)) return;
 
-    std::dynamic_pointer_cast<GNSS_MAG>(ekf_ptr_->observer_ptr_)->set_params(gps_mag_data_ptr);
+    std::dynamic_pointer_cast<GNSS_MAG>(ekf_ptr_->observer_ptr_)->set_params(gps_mag_data_ptr, Eigen::Vector3d::Zero(), Mag_ENU);
 
     printf("[cggos %s] System initialized.\n", __FUNCTION__);
 
@@ -143,6 +177,8 @@ void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
   const Eigen::Isometry3d &Twb = ekf_ptr_->state_ptr_->pose();
   const auto &p_G_Gps_Mag = std::dynamic_pointer_cast<GNSS_MAG>(ekf_ptr_->observer_ptr_)->g2l_mag(gps_mag_data_ptr);
 
+  std::cout << "p_G_Gps_Mag: " << p_G_Gps_Mag.transpose() << std::endl;
+
   const auto &residual = ekf_ptr_->observer_ptr_->measurement_residual(Twb.matrix(), p_G_Gps_Mag);
 
   std::cout << "res: " << residual.transpose() << std::endl;
@@ -150,7 +186,7 @@ void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
   const auto &H = ekf_ptr_->observer_ptr_->measurement_jacobian(Twb.matrix(), p_G_Gps_Mag);
 
   Eigen::Matrix<double, kStateDim, kMeasDim> K;
-  const Eigen::Matrix6d &R = gps_mag_data_ptr->cov;
+  const Eigen::Matrix<double, kMeasDim, kMeasDim> &R = gps_mag_data_ptr->cov;
   ekf_ptr_->update_K(H, R, K);
   ekf_ptr_->update_P(H, R, K);
   *ekf_ptr_->state_ptr_ = *ekf_ptr_->state_ptr_ + K * residual;
@@ -161,7 +197,7 @@ void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
 
   // save data
   {
-    viewer_.publish_GNSS_MAG(*ekf_ptr_->state_ptr_);
+    viewer_.publish_gnss(*ekf_ptr_->state_ptr_);
 
     // save state p q lla
     const auto &lla = std::dynamic_pointer_cast<GNSS_MAG>(ekf_ptr_->observer_ptr_)->l2g(ekf_ptr_->state_ptr_->p_wb_);
@@ -177,21 +213,7 @@ void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
   }
 }
 
-}  // namespace cg
-
-int main(int argc, char **argv) {
-  ros::init(argc, argv, "imu_GNSS_MAG_fusion");
-
-  ros::NodeHandle nh;
-  cg::FusionNode fusion_node(nh);
-
-  ros::spin();
-
-  return 0;
-}
-
-
-Eigen::Vector3d FusionNode::interpolateMag(double t_gps) {
+Eigen::Vector3d FusionNode::interpolate_mag(double t_gps) {
   std::lock_guard<std::mutex> lock(mag_mutex_);
 
   // Ensure there's data to interpolate 
@@ -230,3 +252,18 @@ Eigen::Vector3d FusionNode::interpolateMag(double t_gps) {
 
   return mag_interpolated;
 }
+
+}  // namespace cg
+
+int main(int argc, char **argv) {
+  ros::init(argc, argv, "imu_gnss_mag_fusion");
+
+  ros::NodeHandle nh;
+  cg::FusionNode fusion_node(nh);
+
+  ros::spin();
+
+  return 0;
+}
+
+
