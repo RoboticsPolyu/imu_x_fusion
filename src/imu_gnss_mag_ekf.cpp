@@ -76,8 +76,7 @@ class FusionNode {
     std::lock_guard<std::mutex> lock(mag_mutex_);
       // Add the new message to the deque
     Eigen::Vector3d magnetic, magnetic_bias;
-    double scale = 2.0;
-    
+    double scale = 1;
     magnetic << msg->magnetic_field.x* 1e6, msg->magnetic_field.y* 1e6, msg->magnetic_field.z* 1e6;
     magnetic_bias << 0 ,0 ,0;
     magnetic = scale* magnetic + magnetic_bias;
@@ -153,11 +152,11 @@ void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
   // gps_mag_data_ptr->cov = Eigen::Map<const Eigen::Matrix3d>(gps_msg->position_covariance.data());
   Eigen::Matrix<double, kMeasDim, kMeasDim> cov;
   cov.setZero();
-  Eigen::VectorXd vec6d;
-  vec6d = Eigen::MatrixXd::Zero(6, 1);
-  vec6d << 1, 1, 1, 1, 1, 1;
-  cov.diagonal() = vec6d;
-  std::cout <<  vec6d.transpose() << std::endl;
+  Eigen::VectorXd vec5d;
+  vec5d = Eigen::MatrixXd::Zero(5, 1);
+  vec5d << 1, 1, 1, 2, 2;
+  cov.diagonal() = vec5d;
+  std::cout <<  vec5d.transpose() << std::endl;
   
   gps_mag_data_ptr->cov = cov;
   std::cout <<  "Setting gps mag cov matrix: " << cov << std::endl;

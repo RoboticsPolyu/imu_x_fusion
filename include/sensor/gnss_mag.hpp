@@ -10,7 +10,7 @@
 
 namespace cg {
 
-constexpr int kMeasDim = 6;
+constexpr int kMeasDim = 5;
 
 struct GpsMagData {
   double timestamp;
@@ -51,20 +51,28 @@ class GNSS_MAG : public Observer {
   }
 
   virtual Eigen::MatrixXd measurement_residual(const Eigen::MatrixXd &mat_x, const Eigen::MatrixXd &mat_z) {
-    Eigen::MatrixXd res = mat_z - measurement_function(mat_x);
-    std::cout << "mat_z - measurement_function(mat_x): " << res.transpose() << std::endl;
-    return res;
+    Eigen::Isometry3d Twb;
+    Twb.matrix() = mat_x;
+
+    Eigen::Matrix<double, kMeasDim, 1> residual;
+    residual.topRows(3) = mat_z.topRows(3) - Twb * I_p_Gps_;
+    
+    Eigen::Vector3d mag_z = mat_z.bottomRows(3);
+    residual.bottomRows(2) = Mag_ENU_.head(2) - (Twb.rotation()* mag_z).head(2);
+
+    return residual;
   }
 
   virtual Eigen::MatrixXd measurement_jacobian(const Eigen::MatrixXd &mat_x, const Eigen::MatrixXd &mat_z) {
     Eigen::Isometry3d Twb;
     Twb.matrix() = mat_x;
-
+    Eigen::Matrix<double, 2, 3> E12;
+    E12 << 1, 0, 0, 0, 1, 0;
     Eigen::Matrix<double, kMeasDim, kStateDim> H;
     H.setZero();
     H.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
     H.block<3, 3>(0, 6) = -Twb.linear() * Utils::skew_matrix(I_p_Gps_);
-    H.block<3, 3>(3, 6) = -Utils::skew_matrix(Twb.rotation().transpose()* Mag_ENU_);
+    H.block<2, 3>(3, 6) = E12* Twb.rotation()* Utils::skew_matrix(mat_z.bottomRows(3));
     return H;
   }
 
