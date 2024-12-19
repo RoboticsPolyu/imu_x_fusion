@@ -21,11 +21,13 @@ ANGULAR_ERROR State::kAngError = ANGULAR_ERROR::LOCAL_ANGULAR_ERROR;
 class FusionNode {
  public:
   FusionNode(ros::NodeHandle &nh) : viewer_(nh) {
-    double acc_n, gyr_n, acc_w, gyr_w;
+    double acc_n, gyr_n, acc_w, gyr_w, mag_alp, mag_d_alp;
     nh.param("acc_noise", acc_n, 1e-2);
     nh.param("gyr_noise", gyr_n, 1e-4);
     nh.param("acc_bias_noise", acc_w, 1e-6);
     nh.param("gyr_bias_noise", gyr_w, 1e-8);
+    nh.param("mag_alp", mag_alp, 3.0);
+    nh.param("mag_d_alp", mag_d_alp, 3.0);
 
     const double sigma_pv = 10;
     const double sigma_rp = 10 * kDegreeToRadian;
@@ -76,12 +78,18 @@ class FusionNode {
     std::lock_guard<std::mutex> lock(mag_mutex_);
       // Add the new message to the deque
     Eigen::Vector3d magnetic, magnetic_bias;
-    double scale = 2.0;
+    double scale = 1.0;
     
     magnetic << msg->magnetic_field.x* 1e6, msg->magnetic_field.y* 1e6, msg->magnetic_field.z* 1e6;
     magnetic_bias << 0 ,0 ,0;
     magnetic = scale* magnetic + magnetic_bias;
-
+    // In hongkong, the mag is 45.6 nT
+    // To collect static data to test it
+    // if(std::abs(magnetic.norm() - 45.6) > 3)
+    // {
+    //   ROS_INFO("Magnetic observation is discarded due to the abnormal amplitude !");
+    //   return;     
+    // }
     Eigen::Vector4d t_mag;
     t_mag[0] = msg->header.stamp.toSec();
     t_mag.tail(3) = magnetic;
@@ -91,7 +99,7 @@ class FusionNode {
       mag_buf_.pop_front(); 
     }
     // Log the most recent message (for demonstration purposes)
-    ROS_INFO("Cached Magnetic Field: [x: %f, y: %f, z: %f]", magnetic[0], magnetic[1], magnetic[2]);
+    // ROS_INFO("Cached Magnetic Field: [x: %f, y: %f, z: %f]", magnetic[0], magnetic[1], magnetic[2]);
   }
 
   Eigen::Vector3d interpolate_mag(double t_gps);
@@ -148,19 +156,20 @@ void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
   // }
 
   gps_mag_data_ptr->mag = mag_buf_.back().tail(3);
-
-  std::cout << "interpolate_mag"  << std::endl;
+  gps_mag_data_ptr->acc_unbias = ekf_ptr_->predictor_ptr_->get_imu_data()->data_.head(3) - ekf_ptr_->state_ptr_->acc_bias;
+  
+  std::cout << "gps_mag_data_ptr->acc_unbias: " << gps_mag_data_ptr->acc_unbias << std::endl;
+  
   // gps_mag_data_ptr->cov = Eigen::Map<const Eigen::Matrix3d>(gps_msg->position_covariance.data());
   Eigen::Matrix<double, kMeasDim, kMeasDim> cov;
   cov.setZero();
   Eigen::VectorXd vec6d;
   vec6d = Eigen::MatrixXd::Zero(6, 1);
-  vec6d << 1, 1, 1, 1, 1, 1;
+  vec6d << 1, 1, 1, 3, 3, 3; // need to be configured accordingly
   cov.diagonal() = vec6d;
   std::cout <<  vec6d.transpose() << std::endl;
   
   gps_mag_data_ptr->cov = cov;
-  std::cout <<  "Setting gps mag cov matrix: " << cov << std::endl;
 
   if (!ekf_ptr_->predictor_ptr_->inited_) {
     if (!ekf_ptr_->predictor_ptr_->init(gps_mag_data_ptr->timestamp)) return;
@@ -185,11 +194,25 @@ void FusionNode::gps_callback(const sensor_msgs::NavSatFixConstPtr &gps_msg) {
 
   const auto &H = ekf_ptr_->observer_ptr_->measurement_jacobian(Twb.matrix(), p_G_Gps_Mag);
 
-  Eigen::Matrix<double, kStateDim, kMeasDim> K;
-  const Eigen::Matrix<double, kMeasDim, kMeasDim> &R = gps_mag_data_ptr->cov;
-  ekf_ptr_->update_K(H, R, K);
-  ekf_ptr_->update_P(H, R, K);
-  *ekf_ptr_->state_ptr_ = *ekf_ptr_->state_ptr_ + K * residual;
+  std::cout << "residual.rows" << residual.rows() << std::endl;
+  if(residual.rows() == kMeasDim)
+  {
+    Eigen::Matrix<double, kStateDim, kMeasDim> K;
+    const Eigen::Matrix<double, kMeasDim, kMeasDim> &R = gps_mag_data_ptr->cov;
+    ekf_ptr_->update_K(H, R, K);
+    ekf_ptr_->update_P(H, R, K);
+
+    *ekf_ptr_->state_ptr_ = *ekf_ptr_->state_ptr_ + K * residual;
+  }
+  else
+  {
+    Eigen::Matrix<double, kStateDim, kMeasDim - 3> K;
+    const Eigen::Matrix<double, kMeasDim - 3, kMeasDim - 3> &R = gps_mag_data_ptr->cov.block<kMeasDim - 3, kMeasDim - 3>(0, 0);
+    ekf_ptr_->update_K(H, R, K);
+    ekf_ptr_->update_P(H, R, K);
+
+    *ekf_ptr_->state_ptr_ = *ekf_ptr_->state_ptr_ + K * residual;
+  }
 
   std::cout << "acc bias: " << ekf_ptr_->state_ptr_->acc_bias.transpose() << std::endl;
   std::cout << "gyr bias: " << ekf_ptr_->state_ptr_->gyr_bias.transpose() << std::endl;

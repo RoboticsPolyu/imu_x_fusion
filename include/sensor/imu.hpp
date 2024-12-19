@@ -259,6 +259,9 @@ class IMU : public Predictor {
 
   static const int kImuBufSize = 200;
   std::deque<ImuData::ConstPtr> imu_buf_;
+
+  ImuData::ConstPtr last_imu_;
+  ImuData::ConstPtr cur_imu_;
 };
 
 }  // namespace cg

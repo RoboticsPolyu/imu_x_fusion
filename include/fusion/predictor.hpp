@@ -50,6 +50,11 @@ class Predictor {
     last_data_ptr_ = data_ptr;
   }
 
+  const Data::ConstPtr get_imu_data()
+  {
+    return last_data_ptr_;
+  }
+
  protected:
   virtual bool push_data(Data::ConstPtr data_ptr) = 0;
 
